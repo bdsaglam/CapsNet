@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .utils import conv_output_shape, prod
+from .utils import conv_output_shape, prod, squash
 
 
 class ConvLayer(nn.Module):
@@ -55,12 +55,7 @@ class PrimaryCaps(nn.Module):
         u = [capsule(x) for capsule in self.capsules]
         u = torch.stack(u, dim=1)
         u = u.view(x.size(0), self.num_routes, self.num_capsules)
-        return self.squash(u)
-
-    def squash(self, input_tensor, epsilon=1e-7):
-        squared_norm = (input_tensor ** 2).sum(-1, keepdim=True) + epsilon
-        output_tensor = squared_norm * input_tensor / ((1. + squared_norm) * torch.sqrt(squared_norm))
-        return output_tensor
+        return squash(u, dim=-1)
 
 
 class ObjectCaps(nn.Module):
@@ -93,18 +88,13 @@ class ObjectCaps(nn.Module):
             c_ij = torch.cat([c_ij] * batch_size, dim=0).unsqueeze(4)
 
             s_j = (c_ij * u_hat).sum(dim=1, keepdim=True)
-            v_j = self.squash(s_j)
+            v_j = squash(s_j, dim=-1)
 
             if iteration < self.num_iterations - 1:
                 a_ij = torch.matmul(u_hat.transpose(3, 4), torch.cat([v_j] * self.num_routes, dim=1))
                 b_ij = b_ij + a_ij.squeeze(4).mean(dim=0, keepdim=True)
 
         return v_j.squeeze(1)
-
-    def squash(self, input_tensor):
-        squared_norm = (input_tensor ** 2).sum(-1, keepdim=True)
-        output_tensor = squared_norm * input_tensor / ((1. + squared_norm) * torch.sqrt(squared_norm))
-        return output_tensor
 
 
 class Decoder(nn.Module):
