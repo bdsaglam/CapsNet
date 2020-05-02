@@ -17,7 +17,7 @@ def train(capsule_net, optimizer, data_loader, epoch, device=torch.device("cpu")
         batch_image, batch_label = batch_image.to(device), batch_label.to(device)
 
         optimizer.zero_grad()
-        batch_obj_vectors, batch_reconstruction, batch_masks = capsule_net(batch_image)
+        batch_obj_vectors, batch_reconstruction, batch_masks = capsule_net(batch_image, batch_label)
         loss = capsule_net.loss(batch_obj_vectors, batch_label, batch_image, batch_reconstruction)
         loss.backward()
         optimizer.step()

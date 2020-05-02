@@ -115,10 +115,12 @@ class Decoder(nn.Module):
         device = next(iter(self.parameters())).device
         batch_size = obj_vectors.size(0)
 
-        logits = torch.sqrt((obj_vectors ** 2).sum(2))
-        probs = F.softmax(logits, dim=1)
-        _, best_indices = probs.max(dim=1)
-        masks = F.one_hot(best_indices.squeeze(1).detach(), num_classes=self.num_objects).float().to(device)
+        if labels is None:
+            logits = torch.sqrt((obj_vectors ** 2).sum(2))
+            probs = F.softmax(logits, dim=1)
+            _, best_indices = probs.max(dim=1)
+            labels = best_indices.squeeze(1).detach()
+        masks = F.one_hot(labels, num_classes=self.num_objects).float().to(device)
 
         masked_obj_vectors = (obj_vectors * masks[:, :, None, None]).view(batch_size, -1)
         reconstructions = self.reconstruction_layers(masked_obj_vectors).view(batch_size, *self.output_shape)
@@ -159,9 +161,9 @@ class CapsNet(nn.Module):
 
         self.mse_loss = nn.MSELoss()
 
-    def forward(self, image):
+    def forward(self, image, labels=None):
         obj_vectors = self.object_capsules(self.primary_capsules(self.conv_layer(image)))
-        reconstruction, masks = self.decoder(obj_vectors)
+        reconstruction, masks = self.decoder(obj_vectors, labels=None)
         return obj_vectors, reconstruction, masks
 
     def loss(self, batch_obj_vectors, batch_gt_label, batch_image, batch_reconstruction, reconstruction_loss_coef=5e-4):
