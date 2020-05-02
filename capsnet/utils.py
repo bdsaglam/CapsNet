@@ -1,3 +1,5 @@
+import operator
+from functools import reduce
 from typing import Tuple
 
 
@@ -15,3 +17,7 @@ def conv_output_shape(input_shape: Tuple[int, int, int],
         conv_output_size(input_shape[1], kernel_size=kernel_size, stride=stride, padding=padding),
         conv_output_size(input_shape[2], kernel_size=kernel_size, stride=stride, padding=padding)
     )
+
+
+def prod(iterable):
+    return reduce(operator.mul, iterable, 1)

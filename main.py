@@ -1,78 +1,73 @@
 import numpy as np
 import torch
-from torch.autograd import Variable
 from torchvision import datasets, transforms
 from tqdm import tqdm
 
-from capsnet.capsnet import CapsNet, USE_CUDA
+from capsnet import CapsNet
 from capsnet.config import MNIST
 
-BATCH_SIZE = 100
-N_EPOCHS = 30
-LEARNING_RATE = 0.01
-MOMENTUM = 0.9
 
-
-def train(model, optimizer, train_loader, epoch):
-    capsule_net = model
+def train(capsule_net, optimizer, data_loader, epoch, device=torch.device("cpu")):
+    capsule_net.to(device)
     capsule_net.train()
-    n_batch = len(list(enumerate(train_loader)))
+
+    n_batch = np.ceil(len(data_loader.dataset) / data_loader.batch_size)
     total_loss = 0
-    for batch_id, (data, target) in enumerate(tqdm(train_loader)):
-
-        target = torch.sparse.torch.eye(10).index_select(dim=0, index=target)
-        data, target = Variable(data), Variable(target)
-
-        if USE_CUDA:
-            data, target = data.cuda(), target.cuda()
+    for i, (batch_image, batch_label) in enumerate(tqdm(data_loader)):
+        batch_image, batch_label = batch_image.to(device), batch_label.to(device)
 
         optimizer.zero_grad()
-        output, reconstructions, masked = capsule_net(data)
-        loss = capsule_net.loss(data, output, target, reconstructions)
+        batch_obj_vectors, batch_reconstruction, batch_masked = capsule_net(batch_image)
+        loss = capsule_net.loss(batch_obj_vectors, batch_label, batch_image, batch_reconstruction)
         loss.backward()
         optimizer.step()
 
-        correct = sum(np.argmax(masked.data.cpu().numpy(), 1) == np.argmax(target.data.cpu().numpy(), 1))
-        train_loss = loss.item()
-        total_loss += train_loss
-        if batch_id % 100 == 0:
-            tqdm.write("Epoch: [{}/{}], Batch: [{}/{}], train accuracy: {:.6f}, loss: {:.6f}".format(
-                epoch,
-                N_EPOCHS,
-                batch_id + 1,
-                n_batch,
-                correct / float(BATCH_SIZE),
-                train_loss / float(BATCH_SIZE)
-            ))
-    tqdm.write('Epoch: [{}/{}], train loss: {:.6f}'.format(epoch, N_EPOCHS, total_loss / len(train_loader.dataset)))
+        accuracy = np.mean(
+            np.argmax(batch_masked.detach().cpu().numpy(), 1) == batch_label.cpu().numpy()
+        )
+        total_loss += loss.item()
+        avg_loss = loss.item() / float(data_loader.batch_size)
+
+        if i % 100 == 0:
+            tqdm.write(
+                f"Epoch: [{epoch}], Batch: [{i + 1}/{n_batch}], train accuracy: {accuracy:.6f}, "
+                f"loss: {avg_loss:.6f}"
+            )
 
 
-def evaluate(capsule_net, test_loader, epoch):
+def evaluate(capsule_net, data_loader, epoch, device=torch.device("cpu")):
+    capsule_net.to(device)
     capsule_net.eval()
-    test_loss = 0
-    correct = 0
-    for batch_id, (data, target) in enumerate(test_loader):
 
-        target = torch.sparse.torch.eye(10).index_select(dim=0, index=target)
-        data, target = Variable(data), Variable(target)
+    n_batch = np.ceil(len(data_loader.dataset) / data_loader.batch_size)
+    with torch.no_grad():
+        total_loss = 0
+        for i, (batch_image, batch_label) in enumerate(tqdm(data_loader)):
+            batch_image, batch_label = batch_image.to(device), batch_label.to(device)
 
-        if USE_CUDA:
-            data, target = data.cuda(), target.cuda()
+            batch_obj_vectors, batch_reconstruction, batch_masked = capsule_net(batch_image)
+            loss = capsule_net.loss(batch_obj_vectors, batch_label, batch_image, batch_reconstruction)
 
-        output, reconstructions, masked = capsule_net(data)
-        loss = capsule_net.loss(data, output, target, reconstructions)
+            accuracy = np.mean(
+                np.argmax(batch_masked.detach().cpu().numpy(), 1) == batch_label.cpu().numpy()
+            )
+            total_loss += loss.item()
+            avg_loss = loss.item() / float(data_loader.batch_size)
 
-        test_loss += loss.data[0]
-        correct += sum(np.argmax(masked.data.cpu().numpy(), 1) ==
-                       np.argmax(target.data.cpu().numpy(), 1))
-
-    tqdm.write(
-        "Epoch: [{}/{}], test accuracy: {:.6f}, loss: {:.6f}".format(epoch, N_EPOCHS,
-                                                                     correct / len(test_loader.dataset),
-                                                                     test_loss / len(test_loader)))
+            if i % 100 == 0:
+                tqdm.write(
+                    f"Epoch: [{epoch}], Batch: [{i + 1}/{n_batch}], test accuracy: {accuracy:.6f}, "
+                    f"loss: {avg_loss:.6f}"
+                )
 
 
 if __name__ == '__main__':
+    BATCH_SIZE = 100
+    EPOCHS = 30
+    LEARNING_RATE = 0.01
+    MOMENTUM = 0.9
+    DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    DATASET_CONFIG = MNIST
 
     dataset_transform = transforms.Compose([
         transforms.ToTensor(),
@@ -87,14 +82,11 @@ if __name__ == '__main__':
 
     torch.manual_seed(1)
 
-    capsule_net = CapsNet(**MNIST)
-    capsule_net = torch.nn.DataParallel(capsule_net)
-    if USE_CUDA:
-        capsule_net = capsule_net.cuda()
-    capsule_net = capsule_net.module
+    capsule_net = CapsNet(**DATASET_CONFIG)
+    capsule_net.to(DEVICE)
 
     optimizer = torch.optim.Adam(capsule_net.parameters())
 
-    for e in range(1, 1 + 1):
-        train(capsule_net, optimizer, train_loader, e)
-        evaluate(capsule_net, test_loader, e)
+    for e in range(1, 1 + EPOCHS):
+        train(capsule_net, optimizer, train_loader, e, device=DEVICE)
+        evaluate(capsule_net, test_loader, e, device=DEVICE)
