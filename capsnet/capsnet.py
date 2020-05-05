@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from .utils import conv_output_shape, prod, squash
 
 
-class ConvLayer(nn.Module):
+class ImageEncoder(nn.Module):
     def __init__(self, input_shape, out_channels, kernel_size, stride):
         super().__init__()
 
@@ -59,7 +59,8 @@ class PrimaryCaps(nn.Module):
 
 
 class ObjectCaps(nn.Module):
-    def __init__(self, input_shape, num_capsules, out_channels, num_iterations=3):
+    def __init__(self, input_shape, num_capsules, out_channels,
+                 num_iterations=3):
         super().__init__()
         assert num_iterations > 0
 
@@ -69,7 +70,9 @@ class ObjectCaps(nn.Module):
         self.num_iterations = num_iterations
         self.output_shape = (num_capsules, out_channels, 1)
 
-        self.W = nn.Parameter(torch.randn(1, self.num_routes, num_capsules, out_channels, self.in_channels))
+        self.W = nn.Parameter(
+            torch.randn(1, self.num_routes, num_capsules, out_channels,
+                        self.in_channels))
 
     def forward(self, x):
         device = self.W.device
@@ -91,7 +94,8 @@ class ObjectCaps(nn.Module):
             v_j = squash(s_j, dim=-1)
 
             if iteration < self.num_iterations - 1:
-                a_ij = torch.matmul(u_hat.transpose(3, 4), torch.cat([v_j] * self.num_routes, dim=1))
+                a_ij = torch.matmul(u_hat.transpose(3, 4),
+                                    torch.cat([v_j] * self.num_routes, dim=1))
                 b_ij = b_ij + a_ij.squeeze(4).mean(dim=0, keepdim=True)
 
         return v_j.squeeze(1)
@@ -107,7 +111,8 @@ class Decoder(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(512, 1024),
             nn.ReLU(inplace=True),
-            nn.Linear(1024, self.output_shape[0] * self.output_shape[1] * self.output_shape[2]),
+            nn.Linear(1024, self.output_shape[0] * self.output_shape[1] *
+                      self.output_shape[2]),
             nn.Sigmoid()
         )
 
@@ -120,10 +125,13 @@ class Decoder(nn.Module):
             probs = F.softmax(logits, dim=1)
             _, best_indices = probs.max(dim=1)
             labels = best_indices.squeeze(1).detach()
-        masks = F.one_hot(labels, num_classes=self.num_objects).float().to(device)
+        masks = F.one_hot(labels, num_classes=self.num_objects).float().to(
+            device)
 
-        masked_obj_vectors = (obj_vectors * masks[:, :, None, None]).view(batch_size, -1)
-        reconstructions = self.reconstruction_layers(masked_obj_vectors).view(batch_size, *self.output_shape)
+        masked_obj_vectors = (obj_vectors * masks[:, :, None, None]).view(
+            batch_size, -1)
+        reconstructions = self.reconstruction_layers(masked_obj_vectors).view(
+            batch_size, *self.output_shape)
         return reconstructions, masks
 
 
@@ -141,20 +149,24 @@ class CapsNet(nn.Module):
                  obj_out_channels=16,
                  ):
         super(CapsNet, self).__init__()
-        self.conv_layer = ConvLayer(input_shape=input_shape,
+        self.encoder = ImageEncoder(input_shape=input_shape,
                                     out_channels=cnn_out_channels,
                                     kernel_size=cnn_kernel_size,
                                     stride=cnn_stride)
 
-        self.primary_capsules = PrimaryCaps(input_shape=self.conv_layer.output_shape,
-                                            num_capsules=pc_num_capsules,
-                                            out_channels=pc_out_channels,
-                                            kernel_size=pc_kernel_size,
-                                            stride=pc_stride)
+        self.primary_capsules = PrimaryCaps(
+            input_shape=self.encoder.output_shape,
+            num_capsules=pc_num_capsules,
+            out_channels=pc_out_channels,
+            kernel_size=pc_kernel_size,
+            stride=pc_stride
+        )
 
-        self.object_capsules = ObjectCaps(input_shape=self.primary_capsules.output_shape,
-                                          num_capsules=obj_num_capsules,
-                                          out_channels=obj_out_channels)
+        self.object_capsules = ObjectCaps(
+            input_shape=self.primary_capsules.output_shape,
+            num_capsules=obj_num_capsules,
+            out_channels=obj_out_channels
+        )
 
         self.decoder = Decoder(input_shape=self.object_capsules.output_shape,
                                output_shape=input_shape)
@@ -162,17 +174,21 @@ class CapsNet(nn.Module):
         self.mse_loss = nn.MSELoss()
 
     def forward(self, image, labels=None):
-        obj_vectors = self.object_capsules(self.primary_capsules(self.conv_layer(image)))
+        obj_vectors = self.object_capsules(
+            self.primary_capsules(self.encoder(image)))
         reconstruction, masks = self.decoder(obj_vectors, labels=None)
         return obj_vectors, reconstruction, masks
 
-    def loss(self, batch_obj_vectors, batch_gt_label, batch_image, batch_reconstruction, reconstruction_loss_coef=5e-4):
+    def loss(self, batch_obj_vectors, batch_gt_label, batch_image,
+             batch_reconstruction, reconstruction_loss_coef=5e-4):
         return self.margin_loss(batch_obj_vectors, batch_gt_label) \
-               + reconstruction_loss_coef * self.reconstruction_loss(batch_image, batch_reconstruction)
+               + reconstruction_loss_coef * self.reconstruction_loss(
+            batch_image, batch_reconstruction)
 
     def margin_loss(self, batch_obj_vectors, batch_gt_label):
         num_classes = batch_obj_vectors.size(1)
-        batch_label_embedding = F.one_hot(batch_gt_label, num_classes=num_classes).float()
+        batch_label_embedding = F.one_hot(batch_gt_label,
+                                          num_classes=num_classes).float()
 
         batch_size = batch_obj_vectors.size(0)
 
@@ -181,12 +197,14 @@ class CapsNet(nn.Module):
         left = F.relu(-v_c + 0.9).view(batch_size, -1)
         right = F.relu(v_c - 0.1).view(batch_size, -1)
 
-        loss = batch_label_embedding * left + 0.5 * (1.0 - batch_label_embedding) * right
+        loss = batch_label_embedding * left + 0.5 * (
+                1.0 - batch_label_embedding) * right
         loss = loss.sum(dim=1).mean()
 
         return loss
 
     def reconstruction_loss(self, batch_image, batch_reconstruction):
-        loss = self.mse_loss(batch_reconstruction.view(batch_reconstruction.size(0), -1),
-                             batch_image.view(batch_reconstruction.size(0), -1))
+        loss = self.mse_loss(
+            batch_reconstruction.view(batch_reconstruction.size(0), -1),
+            batch_image.view(batch_reconstruction.size(0), -1))
         return loss

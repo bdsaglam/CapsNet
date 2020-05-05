@@ -1,1 +1,1 @@
-from .capsnet import *
+from .capsnet import CapsNet, ObjectCaps, PrimaryCaps, ImageEncoder
