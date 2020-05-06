@@ -71,8 +71,7 @@ class ObjectCaps(nn.Module):
         self.output_shape = (num_capsules, out_channels, 1)
 
         self.W = nn.Parameter(
-            torch.randn(1, self.num_routes, num_capsules, out_channels,
-                        self.in_channels),
+            torch.randn(1, self.num_routes, num_capsules, out_channels, self.in_channels),
             requires_grad=True
         )
 
@@ -168,8 +167,6 @@ class CapsNet(nn.Module):
 
         self.decoder = Decoder(input_shape=self.object_capsules.output_shape, output_shape=input_shape)
 
-        self.mse_loss = nn.MSELoss()
-
     def forward(self, image, labels=None):
         obj_vectors = self.object_capsules(self.primary_capsules(self.encoder(image)))
         reconstruction, masks = self.decoder(obj_vectors, labels=labels)
@@ -196,7 +193,7 @@ class CapsNet(nn.Module):
         return loss
 
     def reconstruction_loss(self, batch_image, batch_reconstruction):
-        loss = self.mse_loss(
+        loss = F.mse_loss(
             batch_reconstruction.view(batch_reconstruction.size(0), -1),
             batch_image.view(batch_reconstruction.size(0), -1)
         )
