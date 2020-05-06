@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from .utils import conv_output_shape, prod, squash
 
 
-class ImageEncoder(nn.Module):
+class ConvEncoder(nn.Module):
     def __init__(self, input_shape, out_channels, kernel_size, stride):
         super().__init__()
 
@@ -146,10 +146,10 @@ class CapsNet(nn.Module):
                  obj_out_channels=16,
                  ):
         super(CapsNet, self).__init__()
-        self.encoder = ImageEncoder(input_shape=input_shape,
-                                    out_channels=cnn_out_channels,
-                                    kernel_size=cnn_kernel_size,
-                                    stride=cnn_stride)
+        self.encoder = ConvEncoder(input_shape=input_shape,
+                                   out_channels=cnn_out_channels,
+                                   kernel_size=cnn_kernel_size,
+                                   stride=cnn_stride)
 
         self.primary_capsules = PrimaryCaps(
             input_shape=self.encoder.output_shape,
