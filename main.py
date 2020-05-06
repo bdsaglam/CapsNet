@@ -74,8 +74,14 @@ if __name__ == '__main__':
         transforms.Normalize((0.1307,), (0.3081,))
     ])
 
-    train_dataset = datasets.MNIST('./data/mnist', train=True, download=True, transform=dataset_transform)
-    test_dataset = datasets.MNIST('./data/mnist', train=False, download=True, transform=dataset_transform)
+    train_dataset = datasets.MNIST('./data/mnist',
+                                   train=True,
+                                   download=True,
+                                   transform=dataset_transform)
+    test_dataset = datasets.MNIST('./data/mnist',
+                                  train=False,
+                                  download=True,
+                                  transform=dataset_transform)
 
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
