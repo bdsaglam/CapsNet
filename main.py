@@ -74,11 +74,11 @@ if __name__ == '__main__':
         transforms.Normalize((0.1307,), (0.3081,))
     ])
 
-    train_dataset = datasets.MNIST('./data/mnist',
+    train_dataset = datasets.MNIST('./data',
                                    train=True,
                                    download=True,
                                    transform=dataset_transform)
-    test_dataset = datasets.MNIST('./data/mnist',
+    test_dataset = datasets.MNIST('./data',
                                   train=False,
                                   download=True,
                                   transform=dataset_transform)
