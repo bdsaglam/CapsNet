@@ -17,13 +17,13 @@ def train(capsule_net, optimizer, data_loader, epoch, device=torch.device("cpu")
         batch_image, batch_label = batch_image.to(device), batch_label.to(device)
 
         optimizer.zero_grad()
-        batch_obj_vectors, batch_reconstruction, batch_masks = capsule_net(batch_image, batch_label)
-        loss = capsule_net.loss(batch_obj_vectors, batch_label, batch_image, batch_reconstruction)
+        batch_obj_vectors, batch_reconstruction, batch_y_prob = capsule_net(batch_image, batch_label)
+        loss = capsule_net.loss(batch_y_prob, batch_label, batch_image, batch_reconstruction)
         loss.backward()
         optimizer.step()
 
         accuracy = np.mean(
-            np.argmax(batch_masks.detach().cpu().numpy(), 1) == batch_label.cpu().numpy()
+            np.argmax(batch_y_prob.detach().cpu().numpy(), 1) == batch_label.cpu().numpy()
         )
         total_loss += loss.item()
         avg_loss = loss.item() / float(data_loader.batch_size)
@@ -45,11 +45,11 @@ def evaluate(capsule_net, data_loader, epoch, device=torch.device("cpu")):
         for i, (batch_image, batch_label) in enumerate(tqdm(data_loader)):
             batch_image, batch_label = batch_image.to(device), batch_label.to(device)
 
-            batch_obj_vectors, batch_reconstruction, batch_masks = capsule_net(batch_image)
-            loss = capsule_net.loss(batch_obj_vectors, batch_label, batch_image, batch_reconstruction)
+            batch_obj_vectors, batch_reconstruction, batch_y_prob = capsule_net(batch_image)
+            loss = capsule_net.loss(batch_y_prob, batch_label, batch_image, batch_reconstruction)
 
             accuracy = np.mean(
-                np.argmax(batch_masks.detach().cpu().numpy(), 1) == batch_label.cpu().numpy()
+                np.argmax(batch_y_prob.detach().cpu().numpy(), 1) == batch_label.cpu().numpy()
             )
             total_loss += loss.item()
             avg_loss = loss.item() / float(data_loader.batch_size)

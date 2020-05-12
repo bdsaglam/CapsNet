@@ -41,3 +41,11 @@ def squash(input_tensor, dim=-1, epsilon=1e-7):
     unit_vector = input_tensor / safe_norm
     output_tensor = squash_factor * unit_vector
     return output_tensor
+
+
+def safe_norm(input_tensor: torch.Tensor,
+              dim: int = -1,
+              epsilon: float = 1e-7,
+              keepdim: bool = False) -> torch.Tensor:
+    squared_norm = (input_tensor ** 2).sum(dim, keepdim=keepdim)
+    return torch.sqrt(squared_norm + epsilon)

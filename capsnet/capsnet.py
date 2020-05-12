@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .utils import conv_output_shape, prod, squash
+from .utils import conv_output_shape, prod, squash, safe_norm
 
 
 class ConvEncoder(nn.Module):
@@ -52,10 +52,10 @@ class PrimaryCaps(nn.Module):
         self.output_shape = (self.num_routes, self.num_capsules)
 
     def forward(self, x):
-        u = [capsule(x) for capsule in self.capsules]
-        u = torch.stack(u, dim=1)
-        u = u.view(x.size(0), self.num_routes, self.num_capsules)
-        return squash(u, dim=-1)
+        u = [capsule(x) for capsule in self.capsules]  # [(B, C, G, G)] * P
+        u = torch.stack(u, dim=1)  # (B, P, C, G, G)
+        u = u.view(x.size(0), self.num_routes, self.num_capsules)  # (B, C*G*G, P)
+        return squash(u, dim=-1)  # (B, C*G*G, P)
 
 
 class ObjectCaps(nn.Module):
@@ -75,30 +75,32 @@ class ObjectCaps(nn.Module):
             requires_grad=True
         )
 
-    def forward(self, x):
+    def forward(self, x):  # (B, C*G*G, P)
         device = self.W.device
 
         batch_size = x.size(0)
-        x = torch.stack([x] * self.num_capsules, dim=2).unsqueeze(4)
+        x = torch.stack([x] * self.num_capsules, dim=2).unsqueeze(4)  # (B, C*G*G, O, P, 1)
 
-        W = torch.cat([self.W] * batch_size, dim=0)
-        u_hat = torch.matmul(W, x)
+        W = torch.cat([self.W] * batch_size, dim=0)  # (B, C*G*G, O, F, P)
+        u_hat = torch.matmul(W, x)  # (B, C*G*G, O, F, 1)
 
-        b_ij = torch.zeros(1, self.num_routes, self.num_capsules, 1).to(device)
+        b_ij = torch.zeros(batch_size, self.num_routes, self.num_capsules, 1, 1).to(device)  # (B, C*G*G, O, 1, 1)
 
         v_j = None
         for iteration in range(self.num_iterations):
-            c_ij = F.softmax(b_ij, dim=1)
-            c_ij = torch.cat([c_ij] * batch_size, dim=0).unsqueeze(4)
+            c_ij = F.softmax(b_ij, dim=2)  # (B, C*G*G, O, 1, 1)
+            # c_ij = torch.cat([c_ij] * batch_size, dim=0).unsqueeze(4)  # (B, C*G*G, O, 1, 1)
 
-            s_j = (c_ij * u_hat).sum(dim=1, keepdim=True)
-            v_j = squash(s_j, dim=-1)
+            s_j = (c_ij * u_hat).sum(dim=1, keepdim=True)  # (B, 1, O, F, 1)
+            v_j = squash(s_j, dim=3)  # (B, 1, O, F, 1)
 
+            # update vote weights if not last iteration
             if iteration < self.num_iterations - 1:
-                a_ij = torch.matmul(u_hat.transpose(3, 4), torch.cat([v_j] * self.num_routes, dim=1))
-                b_ij = b_ij + a_ij.squeeze(4).mean(dim=0, keepdim=True)
+                v_ij = torch.cat([v_j] * self.num_routes, dim=1)  # (B, C*G*G, O, F, 1)
+                a_ij = torch.matmul(u_hat.transpose(3, 4), v_ij)  # (B, C*G*G, O, 1, 1)
+                b_ij = b_ij + a_ij
 
-        return v_j.squeeze(1)
+        return v_j.squeeze(1)  # (B, O, F, 1)
 
 
 class Decoder(nn.Module):
@@ -115,21 +117,14 @@ class Decoder(nn.Module):
             nn.Sigmoid()
         )
 
-    def forward(self, obj_vectors, labels=None):
+    def forward(self, obj_vectors, label):
         device = next(iter(self.parameters())).device
         batch_size = obj_vectors.size(0)
 
-        if labels is None:
-            logits = torch.sqrt((obj_vectors ** 2).sum(2))
-            probs = F.softmax(logits, dim=1)
-            _, best_indices = probs.max(dim=1)
-            labels = best_indices.squeeze(1).detach()
-
-        masks = F.one_hot(labels, num_classes=self.num_objects).float().to(device)
-
-        masked_obj_vectors = (obj_vectors * masks[:, :, None, None]).view(batch_size, -1)
-        reconstructions = self.reconstruction_layers(masked_obj_vectors).view(batch_size, *self.output_shape)
-        return reconstructions, masks
+        mask = F.one_hot(label, num_classes=self.num_objects).float().to(device)
+        masked_obj_vectors = (obj_vectors * mask[:, :, None, None]).view(batch_size, -1)
+        reconstruction = self.reconstruction_layers(masked_obj_vectors).view(batch_size, *self.output_shape)
+        return reconstruction
 
 
 class CapsNet(nn.Module):
@@ -167,34 +162,39 @@ class CapsNet(nn.Module):
 
         self.decoder = Decoder(input_shape=self.object_capsules.output_shape, output_shape=input_shape)
 
-    def forward(self, image, labels=None):
-        obj_vectors = self.object_capsules(self.primary_capsules(self.encoder(image)))
-        reconstruction, masks = self.decoder(obj_vectors, labels=labels)
-        return obj_vectors, reconstruction, masks
+    def forward(self, image, label=None):
+        obj_vectors = self.object_capsules(self.primary_capsules(self.encoder(image)))  # (B, O, F, 1)
 
-    def loss(self, batch_obj_vectors, batch_gt_label, batch_image, batch_reconstruction, reconstruction_loss_coef=5e-4):
-        return self.margin_loss(batch_obj_vectors, batch_gt_label) \
-               + reconstruction_loss_coef * self.reconstruction_loss(batch_image, batch_reconstruction)
+        y_prob = safe_norm(obj_vectors, dim=2, keepdim=False).squeeze(-1)  # (B, O)
 
-    def margin_loss(self, batch_obj_vectors, batch_gt_label):
-        num_classes = batch_obj_vectors.size(1)
-        batch_label_embedding = F.one_hot(batch_gt_label, num_classes=num_classes).float()
+        if label is None:
+            _, best_indices = y_prob.max(dim=1)
+            label = best_indices.detach()
 
-        batch_size = batch_obj_vectors.size(0)
+        reconstruction = self.decoder(obj_vectors, label=label)
+        return obj_vectors, reconstruction, y_prob
 
-        v_c = torch.sqrt((batch_obj_vectors ** 2).sum(dim=2, keepdim=True))
+    def loss(self, obj_vectors, gt_label, image, reconstruction, reconstruction_loss_coef=5e-4):
+        return self.margin_loss(obj_vectors, gt_label) \
+               + reconstruction_loss_coef * self.reconstruction_loss(image, reconstruction)
 
-        left = F.relu(-v_c + 0.9).view(batch_size, -1)
-        right = F.relu(v_c - 0.1).view(batch_size, -1)
+    def margin_loss(self, y_prob, gt_label, m_plus=0.9, m_minus=0.1, lmd=0.5):
+        batch_size, num_objects = y_prob.shape
 
-        loss = batch_label_embedding * left + 0.5 * (1.0 - batch_label_embedding) * right
+        label_embedding = F.one_hot(gt_label, num_classes=num_objects).float()  # (B, O)
+
+        over_suppressed = (F.relu(-y_prob + m_plus) ** 2).view(batch_size, -1)
+        under_suppressed = (F.relu(y_prob - m_minus) ** 2).view(batch_size, -1)
+
+        loss = label_embedding * over_suppressed + lmd * (1.0 - label_embedding) * under_suppressed
         loss = loss.sum(dim=1).mean()
 
         return loss
 
-    def reconstruction_loss(self, batch_image, batch_reconstruction):
+    def reconstruction_loss(self, image, reconstruction):
+        batch_size = reconstruction.shape[0]
         loss = F.mse_loss(
-            batch_reconstruction.view(batch_reconstruction.size(0), -1),
-            batch_image.view(batch_reconstruction.size(0), -1)
+            reconstruction.view(batch_size, -1),
+            image.view(batch_size, -1)
         )
         return loss
