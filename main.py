@@ -65,7 +65,6 @@ if __name__ == '__main__':
     BATCH_SIZE = 128
     EPOCHS = 10
     LEARNING_RATE = 0.01
-    MOMENTUM = 0.9
     DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     DATASET_CONFIG = MNIST
 
@@ -91,7 +90,7 @@ if __name__ == '__main__':
     capsule_net = CapsNet(**DATASET_CONFIG)
     capsule_net.to(DEVICE)
 
-    optimizer = torch.optim.Adam(capsule_net.parameters())
+    optimizer = torch.optim.Adam(capsule_net.parameters(), lr=LEARNING_RATE)
 
     for e in range(1, 1 + EPOCHS):
         train(capsule_net, optimizer, train_loader, e, device=DEVICE)
