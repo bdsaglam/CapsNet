@@ -71,36 +71,37 @@ class ObjectCaps(nn.Module):
         self.output_shape = (num_capsules, out_channels, 1)
 
         self.W = nn.Parameter(
-            torch.randn(1, self.num_routes, num_capsules, out_channels, self.in_channels),
+            torch.zeros(1, num_capsules, self.num_routes, out_channels, self.in_channels),
             requires_grad=True
-        )
+        )  # (1, O, C*G*G, F, P)
+        with torch.no_grad():
+            torch.nn.init.xavier_uniform_(self.W)
 
     def forward(self, x):  # (B, C*G*G, P)
         device = self.W.device
 
         batch_size = x.size(0)
-        x = torch.stack([x] * self.num_capsules, dim=2).unsqueeze(4)  # (B, C*G*G, O, P, 1)
+        x = torch.stack([x] * self.num_capsules, dim=1).unsqueeze(4)  # (B, O, C*G*G, P, 1)
 
-        W = torch.cat([self.W] * batch_size, dim=0)  # (B, C*G*G, O, F, P)
-        u_hat = torch.matmul(W, x)  # (B, C*G*G, O, F, 1)
+        W = torch.cat([self.W] * batch_size, dim=0)  # (B, O, C*G*G, F, P)
+        u_hat = torch.matmul(W, x)  # (B, O, C*G*G, F, 1)
 
-        b_ij = torch.zeros(batch_size, self.num_routes, self.num_capsules, 1, 1).to(device)  # (B, C*G*G, O, 1, 1)
+        b_ij = torch.zeros(batch_size, self.num_capsules, self.num_routes, 1, 1).to(device)  # (B, O, C*G*G, 1, 1)
 
         v_j = None
         for iteration in range(self.num_iterations):
-            c_ij = F.softmax(b_ij, dim=2)  # (B, C*G*G, O, 1, 1)
-            # c_ij = torch.cat([c_ij] * batch_size, dim=0).unsqueeze(4)  # (B, C*G*G, O, 1, 1)
+            c_ij = F.softmax(b_ij, dim=1)  # (B, O, C*G*G, 1, 1)
 
-            s_j = (c_ij * u_hat).sum(dim=1, keepdim=True)  # (B, 1, O, F, 1)
-            v_j = squash(s_j, dim=3)  # (B, 1, O, F, 1)
+            s_j = (c_ij * u_hat).sum(dim=2, keepdim=True)  # (B, O, 1, F, 1)
+            v_j = squash(s_j, dim=3)  # (B, O, 1, F, 1)
 
             # update vote weights if not last iteration
             if iteration < self.num_iterations - 1:
-                v_ij = torch.cat([v_j] * self.num_routes, dim=1)  # (B, C*G*G, O, F, 1)
-                a_ij = torch.matmul(u_hat.transpose(3, 4), v_ij)  # (B, C*G*G, O, 1, 1)
+                v_ij = torch.cat([v_j] * self.num_routes, dim=2)  # (B, O, C*G*G, F, 1)
+                a_ij = torch.matmul(u_hat.transpose(3, 4), v_ij)  # (B, O, C*G*G, F, 1)
                 b_ij = b_ij + a_ij
 
-        return v_j.squeeze(1)  # (B, O, F, 1)
+        return v_j.squeeze(2)  # (B, O, F, 1)
 
 
 class Decoder(nn.Module):
