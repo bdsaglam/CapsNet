@@ -86,20 +86,20 @@ class ObjectCaps(nn.Module):
         W = torch.cat([self.W] * batch_size, dim=0)  # (B, O, C*G*G, F, P)
         u_hat = torch.matmul(W, x)  # (B, O, C*G*G, F, 1)
 
+        # do not flow gradients due to routing iterations
+        temp_u_hat = u_hat.detach()
         b_ij = torch.zeros(batch_size, self.num_capsules, self.num_routes, 1, 1).to(device)  # (B, O, C*G*G, 1, 1)
-
-        v_j = None
-        for iteration in range(self.num_iterations):
+        for iteration in range(self.num_iterations - 1):
             c_ij = F.softmax(b_ij, dim=1)  # (B, O, C*G*G, 1, 1)
-
-            s_j = (c_ij * u_hat).sum(dim=2, keepdim=True)  # (B, O, 1, F, 1)
+            s_j = (c_ij * temp_u_hat).sum(dim=2, keepdim=True)  # (B, O, 1, F, 1)
             v_j = squash(s_j, dim=3)  # (B, O, 1, F, 1)
+            v_ij = torch.cat([v_j] * self.num_routes, dim=2)  # (B, O, C*G*G, F, 1)
+            a_ij = torch.matmul(temp_u_hat.transpose(3, 4), v_ij)  # (B, O, C*G*G, F, 1)
+            b_ij = b_ij + a_ij
 
-            # update vote weights if not last iteration
-            if iteration < self.num_iterations - 1:
-                v_ij = torch.cat([v_j] * self.num_routes, dim=2)  # (B, O, C*G*G, F, 1)
-                a_ij = torch.matmul(u_hat.transpose(3, 4), v_ij)  # (B, O, C*G*G, F, 1)
-                b_ij = b_ij + a_ij
+        c_ij = F.softmax(b_ij, dim=1)  # (B, O, C*G*G, 1, 1)
+        s_j = (c_ij * u_hat).sum(dim=2, keepdim=True)  # (B, O, 1, F, 1)
+        v_j = squash(s_j, dim=3)  # (B, O, 1, F, 1)
 
         return v_j.squeeze(2)  # (B, O, F, 1)
 

@@ -62,7 +62,7 @@ def evaluate(capsule_net, data_loader, epoch, device=torch.device("cpu")):
 
 
 if __name__ == '__main__':
-    BATCH_SIZE = 128
+    BATCH_SIZE = 32
     EPOCHS = 10
     LEARNING_RATE = 0.01
     DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
