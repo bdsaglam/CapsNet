@@ -10,6 +10,6 @@ setup(
         'torchvision',
         'tqdm'
     ],
-    description="",
-    author="BDS",
+    description="PyTorch implementation of Capsule Networks with Dynamic Routing",
+    author="Barış Deniz Sağlam",
 )
